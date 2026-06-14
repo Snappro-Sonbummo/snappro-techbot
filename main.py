@@ -1,4 +1,6 @@
-import os, re, base64, httpx
+import os
+import base64
+import httpx
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
@@ -53,14 +55,14 @@ async def ask_claude(user_message, image_data=None, image_type=None):
 
     system = """Bạn là chuyên gia kỹ thuật của SnapPro - cho thuê thiết bị quay phim chụp ảnh tại HCM.
 Trả lời bằng tiếng Việt, thân thiện, hướng dẫn từng bước rõ ràng.
-Nếu khách gửi ảnh, nhận diện thiết bị từ ảnh.
+Nếu khách gửi ảnh, hãy nhận diện thiết bị từ ảnh và tư vấn cách sử dụng/kết nối.
 Nếu chưa đủ thông tin, hỏi lại: dòng máy gì, thiết bị kèm theo, vấn đề cụ thể?
 """ + (f"\nTài liệu Sony:\n{helpguide[:4000]}" if helpguide else "")
 
     if image_data:
         content = [
             {"type": "image", "source": {"type": "base64", "media_type": image_type, "data": image_data}},
-            {"type": "text", "text": user_message or "Nhận diện thiết bị trong ảnh và tư vấn cách sử dụng?"}
+            {"type": "text", "text": user_message or "Nhận diện thiết bị trong ảnh và hướng dẫn kết nối/sử dụng?"}
         ]
     else:
         content = user_message
@@ -72,6 +74,12 @@ Nếu chưa đủ thông tin, hỏi lại: dòng máy gì, thiết bị kèm the
             json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1000, "system": system, "messages": [{"role": "user", "content": content}]}
         )
         return r.json()["content"][0]["text"]
+
+async def download_and_encode(file_obj, context):
+    file = await context.bot.get_file(file_obj.file_id)
+    async with httpx.AsyncClient() as client:
+        img = await client.get(file.file_path)
+        return base64.b64encode(img.content).decode()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text or ""
@@ -89,11 +97,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 Đang phân tích ảnh thiết bị...")
     try:
         photo = update.message.photo[-1]
-        file = await context.bot.get_file(photo.file_id)
-        async with httpx.AsyncClient() as client:
-            img = await client.get(file.file_path)
-            image_data = base64.b64encode(img.content).decode()
-        reply = await ask_claude(update.message.caption or "", image_data, "image/jpeg")
+        image_data = await download_and_encode(photo, context)
+        caption = update.message.caption or ""
+        reply = await ask_claude(caption, image_data, "image/jpeg")
+        await update.message.reply_text(reply)
+    except:
+        await update.message.reply_text("❌ Không đọc được ảnh. Bạn thử mô tả bằng text nhé!")
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc.mime_type or not doc.mime_type.startswith("image/"):
+        await update.message.reply_text("📎 Mình chỉ đọc được file ảnh thôi! Bạn thử gửi ảnh trực tiếp hoặc mô tả bằng text.")
+        return
+    await update.message.reply_text("📸 Đang phân tích ảnh thiết bị...")
+    try:
+        image_data = await download_and_encode(doc, context)
+        caption = update.message.caption or ""
+        reply = await ask_claude(caption, image_data, doc.mime_type)
         await update.message.reply_text(reply)
     except:
         await update.message.reply_text("❌ Không đọc được ảnh. Bạn thử mô tả bằng text nhé!")
@@ -102,6 +122,7 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     print("Bot đang chạy...")
     app.run_polling()
 
