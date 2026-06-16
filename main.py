@@ -25,53 +25,71 @@ SYSTEM = (
     "- Khi có phần TÀI LIỆU THIẾT BỊ bên dưới, hãy DÙNG thông tin đó để trả lời cụ thể: công suất, "
     "thông số, ngàm, cách dùng, cách xử lý lỗi. Trích dẫn con số rõ ràng.\n"
     "- Chỉ nói 'liên hệ Snappro để biết thêm' khi thật sự không có thông tin. Đừng lạm dụng câu này.\n"
-    "- Nếu khách hỏi một dòng máy/đèn cụ thể mà tài liệu có, hãy liệt kê các model và thông số chính.\n"
+    "- KHÔNG bịa thông số. Nếu tài liệu không có, nói thẳng là chưa có thông tin model đó.\n"
+    "- Về giá thuê và tình trạng còn hàng thì luôn mời khách liên hệ Snappro (vì tài liệu không có giá).\n"
     "- Trả lời bằng tiếng Việt có dấu, thân thiện, ngắn gọn.\n"
     "ĐỊNH DẠNG: văn bản thuần, KHÔNG dùng Markdown, không dùng # ## ** __ * ``` --- |. "
     "Chỉ dùng số (1. 2. 3.) và gạch (-) để liệt kê. Có thể dùng emoji để làm nổi bật.\n"
 )
 
-# Từ đệm tiếng Việt cần bỏ khi tách từ khoá tìm kiếm
+# Từ đệm tiếng Việt + tiếng Anh cần bỏ khi tách từ khoá (tránh tìm rác)
 STOP = {
     "thì", "có", "là", "và", "cho", "của", "bao", "nhiêu", "như", "thế", "nào",
     "được", "cái", "một", "mình", "bạn", "với", "khi", "này", "sao", "không",
-    "dùng", "loại", "the", "and", "for", "what", "how", "which", "are", "này",
+    "dùng", "loại", "dòng", "mã", "cây", "cần", "giá", "tiền", "mức", "túi",
+    "đèn", "máy", "tôi", "các", "vừa", "khoẻ", "khỏe", "đang", "muốn",
+    "the", "and", "for", "what", "how", "which", "are", "with", "that",
 }
 
 
-def search_rows(query, limit=6):
-    """Tìm cả trong cột model lẫn content."""
-    rows = []
-    for col in ("model", "content"):
-        try:
-            r = (supabase.table("sony_manuals")
-                 .select("model,title,heading,content,url")
-                 .ilike(col, f"%{query}%")
-                 .limit(limit).execute())
-            rows += (r.data or [])
-        except Exception as e:
-            logger.error(f"Search error ({col}/{query}): {e}")
-    return rows
+def _terms(question):
+    """Tách từ khoá + ghép token thành mã model (fc 720 -> fc720, fc-720, fc 720)."""
+    q = question.lower()
+    raw = re.findall(r"[a-z0-9]+", q)
+    base = [t for t in raw if t not in STOP and (len(t) >= 3 or t.isdigit())]
+    merges = []
+    for i in range(len(raw) - 1):
+        a, b = raw[i], raw[i + 1]
+        if a.isalpha() and 1 <= len(a) <= 6 and any(ch.isdigit() for ch in b):
+            merges += [a + b, a + "-" + b, a + " " + b]
+    ordered = []
+    for t in merges + base:          # mã model (cụ thể) ưu tiên trước
+        if t not in ordered:
+            ordered.append(t)
+    return ordered, set(base) | set(merges)
 
 
 def get_context(question):
-    q = question.lower()
-    words = [w for w in re.findall(r"\w+", q) if len(w) >= 2 and w not in STOP]
-
-    results, seen = [], set()
-    for w in words[:6]:
-        for r in search_rows(w):
-            # Gộp trùng theo nội dung (KHÔNG theo url, vì nhiều manual có url rỗng)
-            key = (r.get("content", "") or "")[:80]
-            if key and key not in seen:
-                seen.add(key)
-                results.append(r)
-
-    if not results:
+    terms, qset = _terms(question)
+    if not terms:
         return ""
 
+    pool = {}
+    for term in terms[:6]:
+        for col in ("content", "model"):
+            try:
+                r = (supabase.table("sony_manuals")
+                     .select("model,heading,content")
+                     .ilike(col, f"%{term}%").limit(20).execute())
+                for row in (r.data or []):
+                    key = (row.get("content", "") or "")[:120]
+                    if key:
+                        pool.setdefault(key, row)
+            except Exception as e:
+                logger.error(f"Search error ({col}/{term}): {e}")
+
+    if not pool:
+        return ""
+
+    def score(row):
+        text = ((row.get("content", "") or "") + " " + (row.get("model", "") or "")).lower()
+        return sum(1 for t in qset if t in text)
+
+    ranked = sorted(pool.values(), key=score, reverse=True)
+    top = [r for r in ranked if score(r) > 0][:8] or ranked[:6]
+
     ctx = "TÀI LIỆU THIẾT BỊ (trích từ manual hãng):\n"
-    for i, r in enumerate(results[:8], 1):
+    for i, r in enumerate(top, 1):
         model = r.get("model", "") or ""
         heading = r.get("heading", "") or ""
         body = (r.get("content", "") or "")[:600]
