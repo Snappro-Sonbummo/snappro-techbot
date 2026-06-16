@@ -18,42 +18,51 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 chat_history = {}
 
 SYSTEM = (
-    "Bạn là trợ lý kỹ thuật của Snappro - cửa hàng cho thuê thiết bị nhiếp ảnh và quay phim. "
-    "Snappro cho thuê nhiều thương hiệu: máy ảnh Sony/Canon/Fujifilm, gimbal DJI, mic, flycam, "
-    "đèn Nanlite, Nanlux, Aputure, Amaran, Godox và nhiều thiết bị khác.\n"
-    "CÁCH TRẢ LỜI:\n"
-    "- Khi có phần TÀI LIỆU THIẾT BỊ bên dưới, hãy DÙNG thông tin đó để trả lời cụ thể: công suất, "
-    "thông số, ngàm, cách dùng, cách xử lý lỗi. Trích dẫn con số rõ ràng.\n"
-    "- Chỉ nói 'liên hệ Snappro để biết thêm' khi thật sự không có thông tin. Đừng lạm dụng câu này.\n"
-    "- KHÔNG bịa thông số. Nếu tài liệu không có, nói thẳng là chưa có thông tin model đó.\n"
-    "- Về giá thuê và tình trạng còn hàng thì luôn mời khách liên hệ Snappro (vì tài liệu không có giá).\n"
-    "- Trả lời bằng tiếng Việt có dấu, thân thiện, ngắn gọn.\n"
-    "ĐỊNH DẠNG: văn bản thuần, KHÔNG dùng Markdown, không dùng # ## ** __ * ``` --- |. "
-    "Chỉ dùng số (1. 2. 3.) và gạch (-) để liệt kê. Có thể dùng emoji để làm nổi bật.\n"
+    "Ban la tro ly ky thuat cua Snappro - cua hang cho thue thiet bi nhiep anh va quay phim. "
+    "Snappro cho thue nhieu thuong hieu: may anh Sony/Canon/Fujifilm, gimbal DJI, mic, flycam, "
+    "den Nanlite, Nanlux, Aputure, Amaran, Godox va nhieu thiet bi khac.\n"
+    "CACH TRA LOI:\n"
+    "- Khi co phan TAI LIEU THIET BI ben duoi, hay DUNG thong tin do de tra loi cu the: cong suat, "
+    "thong so, ngam, cach dung, cach xu ly loi. Trich dan con so ro rang.\n"
+    "- Chi noi 'lien he Snappro de biet them' khi that su khong co thong tin. Dung lam dung cau nay.\n"
+    "- KHONG bia thong so. Neu tai lieu khong co, noi thang la chua co thong tin model do.\n"
+    "- Ve gia thue va tinh trang con hang thi luon moi khach lien he Snappro.\n"
+    "- Tra loi bang tieng Viet co dau, than thien, ngan gon.\n"
+    "DINH DANG: van ban thuan, KHONG dung Markdown, khong dung # ## ** __ * ``` --- |. "
+    "Chi dung so (1. 2. 3.) va gach (-) de liet ke. Co the dung emoji de lam noi bat.\n"
 )
 
-# Từ đệm tiếng Việt + tiếng Anh cần bỏ khi tách từ khoá (tránh tìm rác)
 STOP = {
-    "thì", "có", "là", "và", "cho", "của", "bao", "nhiêu", "như", "thế", "nào",
-    "được", "cái", "một", "mình", "bạn", "với", "khi", "này", "sao", "không",
-    "dùng", "loại", "dòng", "mã", "cây", "cần", "giá", "tiền", "mức", "túi",
-    "đèn", "máy", "tôi", "các", "vừa", "khoẻ", "khỏe", "đang", "muốn",
+    "thi", "co", "la", "va", "cho", "cua", "bao", "nhieu", "nhu", "the", "nao",
+    "duoc", "cai", "mot", "minh", "ban", "voi", "khi", "nay", "sao", "khong",
+    "dung", "loai", "dong", "ma", "cay", "can", "gia", "tien", "muc", "tui",
+    "den", "may", "toi", "cac", "vua", "khoe", "dang", "muon", "huong", "dan",
+    "ket", "noi", "chia", "nhom", "tren", "voi", "cach",
     "the", "and", "for", "what", "how", "which", "are", "with", "that",
 }
 
+# Từ khoá quan trọng cần ưu tiên tìm chính xác
+PRIORITY_TERMS = {"nanlink", "bluetooth", "ws-tb-1", "wstb1", "group", "scene", "2.4g"}
+
 
 def _terms(question):
-    """Tách từ khoá + ghép token thành mã model (fc 720 -> fc720, fc-720, fc 720)."""
     q = question.lower()
-    raw = re.findall(r"[a-z0-9]+", q)
+    # Chuẩn hoá tiếng Việt không dấu để match
+    vn_map = str.maketrans("àáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ",
+                           "aaaaaaaaaaaaaaadeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyy")
+    q_norm = q.translate(vn_map)
+
+    raw = re.findall(r"[a-z0-9]+", q_norm)
     base = [t for t in raw if t not in STOP and (len(t) >= 3 or t.isdigit())]
+
     merges = []
     for i in range(len(raw) - 1):
         a, b = raw[i], raw[i + 1]
         if a.isalpha() and 1 <= len(a) <= 6 and any(ch.isdigit() for ch in b):
-            merges += [a + b, a + "-" + b, a + " " + b]
+            merges += [a + b, a + "-" + b]
+
     ordered = []
-    for t in merges + base:          # mã model (cụ thể) ưu tiên trước
+    for t in merges + base:
         if t not in ordered:
             ordered.append(t)
     return ordered, set(base) | set(merges)
@@ -65,12 +74,14 @@ def get_context(question):
         return ""
 
     pool = {}
-    for term in terms[:6]:
+    # Chỉ dùng tối đa 4 terms, mỗi term lấy tối đa 8 rows (thay vì 20)
+    for term in terms[:4]:
         for col in ("content", "model"):
             try:
                 r = (supabase.table("sony_manuals")
                      .select("model,heading,content")
-                     .ilike(col, f"%{term}%").limit(20).execute())
+                     .ilike(col, f"%{term}%")
+                     .limit(8).execute())
                 for row in (r.data or []):
                     key = (row.get("content", "") or "")[:120]
                     if key:
@@ -86,31 +97,31 @@ def get_context(question):
         return sum(1 for t in qset if t in text)
 
     ranked = sorted(pool.values(), key=score, reverse=True)
-    top = [r for r in ranked if score(r) > 0][:8] or ranked[:6]
+    top = [r for r in ranked if score(r) > 0][:6] or ranked[:4]
 
-    ctx = "TÀI LIỆU THIẾT BỊ (trích từ manual hãng):\n"
+    ctx = "TAI LIEU THIET BI (trich tu manual hang):\n"
     for i, r in enumerate(top, 1):
         model = r.get("model", "") or ""
         heading = r.get("heading", "") or ""
-        body = (r.get("content", "") or "")[:600]
+        body = (r.get("content", "") or "")[:500]
         ctx += f"[{i}] {model} - {heading}\n{body}\n---\n"
     return ctx
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    question = update.message.text or update.message.caption or "Thiết bị này là gì?"
+    question = update.message.text or update.message.caption or "Thiet bi nay la gi?"
     await update.message.chat.send_action("typing")
 
     manual_ctx = get_context(question)
     history = chat_history.get(uid, [])
     msgs = list(history)
-    content = f"{manual_ctx}\nCâu hỏi: {question}" if manual_ctx else question
+    content = f"{manual_ctx}\nCau hoi: {question}" if manual_ctx else question
     msgs.append({"role": "user", "content": content})
 
     try:
         resp = claude.messages.create(
-            model="claude-sonnet-4-6", max_tokens=1024, system=SYSTEM, messages=msgs
+            model="claude-sonnet-4-6", max_tokens=800, system=SYSTEM, messages=msgs
         )
         answer = resp.content[0].text
         chat_history.setdefault(uid, [])
@@ -121,25 +132,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer[:4000])
     except Exception as e:
         logger.error(f"Error: {e}")
-        await update.message.reply_text("Xin lỗi, có sự cố. Thử lại sau nhé!")
+        await update.message.reply_text("Xin loi, co su co. Thu lai sau nhe!")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_history[update.effective_user.id] = []
     await update.message.reply_text(
-        "Xin chào! Mình là trợ lý kỹ thuật Snappro 📷\n\n"
-        "Mình có thể giúp bạn về thiết bị Snappro cho thuê:\n"
-        "- Máy ảnh Sony, Canon, Fujifilm\n"
+        "Xin chao! Minh la tro ly ky thuat Snappro\n\n"
+        "Minh co the giup ban ve thiet bi Snappro cho thue:\n"
+        "- May anh Sony, Canon, Fujifilm\n"
         "- Gimbal DJI, mic, flycam\n"
-        "- Đèn Nanlite, Nanlux, Aputure, Amaran, Godox\n"
-        "- Thông số, cách dùng, ngàm, phụ kiện, xử lý lỗi\n\n"
-        "Hỏi mình bất cứ điều gì nhé! 🚀"
+        "- Den Nanlite, Nanlux, Aputure, Amaran, Godox\n"
+        "- Thong so, cach dung, ngam, phu kien, xu ly loi\n"
+        "- Ket noi NanLink App, tao group den\n\n"
+        "Hoi minh bat cu dieu gi nhe!"
     )
 
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_history[update.effective_user.id] = []
-    await update.message.reply_text("Đã xoá lịch sử chat! Bạn có thể bắt đầu lại từ đầu 🗑️")
+    await update.message.reply_text("Da xoa lich su chat! Ban co the bat dau lai tu dau")
 
 
 def main():
@@ -154,4 +166,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-# deploy trigger
