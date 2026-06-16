@@ -17,40 +17,37 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 chat_history = {}
 
-SYSTEM = (
-    "Ban la tro ly ky thuat cua Snappro - cua hang cho thue thiet bi nhiep anh va quay phim. "
-    "Snappro cho thue nhieu thuong hieu: may anh Sony/Canon/Fujifilm, gimbal DJI, mic, flycam, "
-    "den Nanlite, Nanlux, Aputure, Amaran, Godox va nhieu thiet bi khac.\n"
-    "CACH TRA LOI:\n"
-    "- Khi co phan TAI LIEU THIET BI ben duoi, hay DUNG thong tin do de tra loi cu the: cong suat, "
-    "thong so, ngam, cach dung, cach xu ly loi. Trich dan con so ro rang.\n"
-    "- Chi noi 'lien he Snappro de biet them' khi that su khong co thong tin. Dung lam dung cau nay.\n"
-    "- KHONG bia thong so. Neu tai lieu khong co, noi thang la chua co thong tin model do.\n"
-    "- Ve gia thue va tinh trang con hang thi luon moi khach lien he Snappro.\n"
-    "- Tra loi bang tieng Viet co dau, than thien, ngan gon.\n"
-    "DINH DANG: van ban thuan, KHONG dung Markdown, khong dung # ## ** __ * ``` --- |. "
-    "Chi dung so (1. 2. 3.) va gach (-) de liet ke. Co the dung emoji de lam noi bat.\n"
-)
+SYSTEM = """Ban la tro ly ky thuat cua Snappro - cua hang cho thue thiet bi nhiep anh va quay phim.
+Snappro cho thue: may anh Sony/Canon/Fujifilm, gimbal DJI, mic, flycam, den Nanlite, Nanlux, Aputure, Amaran, Godox.
+
+CACH TRA LOI:
+- Neu co TAI LIEU THIET BI ben duoi, dung thong tin do de tra loi cu the: cong suat, thong so, ngam, cach dung. Trich dan con so ro rang.
+- Chi noi "lien he Snappro" khi that su khong co thong tin. Khong lam dung cau nay.
+- Khong bia thong so. Neu tai lieu khong co, noi thang la chua co thong tin.
+- Gia thue va tinh trang con hang: moi khach lien he Snappro truc tiep.
+- Tra loi bang tieng Viet co dau, than thien, ngan gon.
+- DINH DANG: van ban thuan, khong dung Markdown, khong dung # ** __ * --- |
+- Chi dung so (1. 2. 3.) va (-) de liet ke. Co the dung emoji."""
 
 STOP = {
     "thi", "co", "la", "va", "cho", "cua", "bao", "nhieu", "nhu", "the", "nao",
     "duoc", "cai", "mot", "minh", "ban", "voi", "khi", "nay", "sao", "khong",
     "dung", "loai", "dong", "ma", "cay", "can", "gia", "tien", "muc", "tui",
     "den", "may", "toi", "cac", "vua", "khoe", "dang", "muon", "huong", "dan",
-    "ket", "noi", "chia", "nhom", "tren", "voi", "cach",
-    "the", "and", "for", "what", "how", "which", "are", "with", "that",
+    "ket", "noi", "chia", "nhom", "tren", "cach", "nao", "the", "and", "for",
+    "what", "how", "which", "are", "with", "that", "can", "sanh", "hai", "nay",
 }
-
-# Từ khoá quan trọng cần ưu tiên tìm chính xác
-PRIORITY_TERMS = {"nanlink", "bluetooth", "ws-tb-1", "wstb1", "group", "scene", "2.4g"}
 
 
 def _terms(question):
     q = question.lower()
-    # Chuẩn hoá tiếng Việt không dấu để match
-    vn_map = str.maketrans("àáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ",
-                           "aaaaaaaaaaaaaaadeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyy")
-    q_norm = q.translate(vn_map)
+    # Bo dau tieng Viet
+    chars = "aaaaaaaaaaaaaaaaadeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyy"
+    keys  = "aaaaaaaaaaaaaaaaadeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyy"
+    vn = "àáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ"
+    plain = "aaaaaaaaaaaaaaadeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyy"
+    trans = str.maketrans(vn, plain)
+    q_norm = q.translate(trans)
 
     raw = re.findall(r"[a-z0-9]+", q_norm)
     base = [t for t in raw if t not in STOP and (len(t) >= 3 or t.isdigit())]
@@ -74,7 +71,6 @@ def get_context(question):
         return ""
 
     pool = {}
-    # Chỉ dùng tối đa 4 terms, mỗi term lấy tối đa 8 rows (thay vì 20)
     for term in terms[:4]:
         for col in ("content", "model"):
             try:
@@ -138,20 +134,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_history[update.effective_user.id] = []
     await update.message.reply_text(
-        "Xin chao! Minh la tro ly ky thuat Snappro\n\n"
+        "Xin chao! Minh la tro ly ky thuat Snappro \U0001f4f7\n\n"
         "Minh co the giup ban ve thiet bi Snappro cho thue:\n"
         "- May anh Sony, Canon, Fujifilm\n"
         "- Gimbal DJI, mic, flycam\n"
         "- Den Nanlite, Nanlux, Aputure, Amaran, Godox\n"
         "- Thong so, cach dung, ngam, phu kien, xu ly loi\n"
         "- Ket noi NanLink App, tao group den\n\n"
-        "Hoi minh bat cu dieu gi nhe!"
+        "Hoi minh bat cu dieu gi nhe! \U0001f680"
     )
 
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_history[update.effective_user.id] = []
-    await update.message.reply_text("Da xoa lich su chat! Ban co the bat dau lai tu dau")
+    await update.message.reply_text("Da xoa lich su chat! Ban co the bat dau lai tu dau \U0001f5d1")
 
 
 def main():
